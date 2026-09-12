@@ -60,7 +60,7 @@ beforeEach(() => {
   _initTestDatabase();
   vi.clearAllMocks();
   mocks.auth.mockResolvedValue({ team_id: 'T123', user_id: 'USELF' });
-  mocks.post.mockResolvedValue({ ok: true });
+  mocks.post.mockResolvedValue({ ok: true, ts: '1789227890.000001' });
   mocks.start.mockResolvedValue(undefined);
 });
 describe('Slack adapter', () => {

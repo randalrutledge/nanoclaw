@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { SlackOutbox } from './channels/slack-outbox.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -13,6 +14,10 @@ import {
 } from './types.js';
 
 let db: Database.Database;
+
+export function getSlackOutbox(): SlackOutbox {
+  return new SlackOutbox(db);
+}
 
 function createSchema(database: Database.Database): void {
   database.exec(`

@@ -30,7 +30,9 @@ Use one fresh thread and task ID per test. Record Slack timestamps and the relev
 
 ## Remaining limits before unattended use
 
-- No durable outbound queue or offline history catch-up. A stored task can survive a failed acknowledgement, but a failed final reply can still be lost. Socket health is not fully reflected by `isConnected`.
+- Outgoing replies now persist in `slack_outbox` before transport. A five-second worker drains pending replies. Explicit rate-limit rejections retry up to five attempts with persistent workspace backoff; SDK automatic retries are disabled. Pending replies survive a database reopen. Interrupted sends and network/ambiguous outcomes become `uncertain` and are not automatically replayed. Confirmed posts store Slack's timestamp. Platform rejections become `failed`.
+- The caller's send promise means accepted into the durable outbox, not delivered to Slack. Operators must inspect failed/uncertain rows before claiming a task reached its recipient. Use a read-only query of id, workspace, jid, status, attempts, remote_ts and reason; do not publish stored message bodies. There is no reconciliation UI or automatic history lookup yet, no retention cleanup and no stable upstream output ID to deduplicate a caller resubmitting a reply. One host process must own this database; concurrent process startup recovery is unsupported.
+- Offline inbound history catch-up remains absent. Socket health is not fully reflected by `isConnected`.
 - No technical stop command, execution budget, or cross-agent shared claim service. Task receipts apply to this NanoClaw database and Andy only. Prompt wording is not a security boundary for an agent's existing tools.
 - No live Slack, Docker-agent, complete process restart, or multi-process race validation has been performed here. Mocked connector recreation is not a real deployment restart.
 - There is a 100-thread registration cap per channel and no automatic cleanup. Responses over 3,500 characters are explicitly shortened; use linked artifacts for larger results.

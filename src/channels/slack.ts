@@ -1,5 +1,5 @@
 import { App, LogLevel } from '@slack/bolt';
-import { storeSlackTask } from '../db.js';
+import { getSlackOutbox, storeSlackTask } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import type { Channel } from '../types.js';
@@ -17,6 +17,9 @@ export class SlackChannel implements Channel {
   private connected = false;
   private self = '';
   private app: App;
+  private outbox = getSlackOutbox();
+  private deliveryTimer?: ReturnType<typeof setInterval>;
+  private draining?: Promise<void>;
 
   constructor(
     botToken: string,
@@ -29,6 +32,10 @@ export class SlackChannel implements Channel {
       appToken,
       socketMode: true,
       logLevel: LogLevel.ERROR,
+      clientOptions: {
+        retryConfig: { retries: 0 },
+        rejectRateLimitedCalls: true,
+      },
     });
     this.app.event('message', async ({ event, body }) => {
       if (!this.connected) return;
@@ -47,6 +54,7 @@ export class SlackChannel implements Channel {
     if (auth.team_id !== this.policy.workspace || !auth.user_id)
       throw new Error('Slack workspace/identity mismatch');
     this.self = auth.user_id;
+    this.outbox.recover(this.policy.workspace);
     // Set before start so messages arriving during Socket Mode startup can be handled.
     this.connected = true;
     try {
@@ -56,6 +64,13 @@ export class SlackChannel implements Channel {
       throw error;
     }
     logger.info('Slack task connector started');
+    await this.flushOutbox();
+    this.deliveryTimer = setInterval(() => {
+      void this.flushOutbox().catch(() =>
+        logger.error('Slack outbox storage failure; operator review required'),
+      );
+    }, 5000);
+    this.deliveryTimer.unref();
   }
 
   async receive(event: SlackInput, team: string): Promise<void> {
@@ -136,12 +151,42 @@ export class SlackChannel implements Channel {
       text.length > 3500
         ? `${text.slice(0, 3400)}\n[Response shortened; request a saved artifact for the full result.]`
         : text;
-    await this.app.client.chat.postMessage({
-      ...target,
-      text: content,
-      unfurl_links: false,
-      unfurl_media: false,
+    this.outbox.enqueue(this.policy.workspace, jid, content);
+    // Resolution means durably accepted for delivery, not confirmed by Slack.
+    await this.flushOutbox();
+  }
+
+  private async flushOutbox(): Promise<void> {
+    if (this.draining) return this.draining;
+    this.draining = this.outbox.drain(this.policy.workspace, async (row) => {
+      const target = slackDestination(row.jid);
+      const parent = this.opts.registeredGroups()[`slack:${target.channel}`];
+      if (
+        !this.connected ||
+        !parent ||
+        parent.isMain ||
+        !this.policy.channels.has(target.channel) ||
+        !this.opts.registeredGroups()[row.jid]
+      ) {
+        throw Object.assign(new Error('Destination unavailable'), {
+          code: 'slack_destination_revoked',
+        });
+      }
+      const result = await this.app.client.chat.postMessage({
+        ...target,
+        text: row.text,
+        unfurl_links: false,
+        unfurl_media: false,
+      });
+      if (!result.ok || !result.ts)
+        throw new Error('Slack delivery not confirmed');
+      return result.ts;
     });
+    try {
+      await this.draining;
+    } finally {
+      this.draining = undefined;
+    }
   }
 
   ownsJid(jid: string): boolean {
@@ -152,6 +197,8 @@ export class SlackChannel implements Channel {
   }
   async disconnect(): Promise<void> {
     this.connected = false;
+    clearInterval(this.deliveryTimer);
+    await this.draining;
     await this.app.stop();
   }
 }
