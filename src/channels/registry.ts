@@ -6,6 +6,7 @@ import {
 } from '../types.js';
 
 export interface ChannelOpts {
+  registerConversation?: (jid: string, group: RegisteredGroup) => void;
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;

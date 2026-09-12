@@ -85,6 +85,25 @@ function createSchema(database: Database.Database): void {
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
+  const messageColumns = database
+    .prepare('PRAGMA table_info(messages)')
+    .all() as { name: string }[];
+  if (
+    !messageColumns.some(
+      (column) => column.name === 'slack_dispatch_authorized',
+    )
+  ) {
+    database.exec(
+      'ALTER TABLE messages ADD COLUMN slack_dispatch_authorized INTEGER NOT NULL DEFAULT 0',
+    );
+  }
+  database.exec(`CREATE TABLE IF NOT EXISTS slack_task_receipts (
+    task_key TEXT PRIMARY KEY,
+    chat_jid TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`);
+
   try {
     database.exec(
       `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
@@ -301,6 +320,28 @@ export function storeMessage(msg: NewMessage): void {
   );
 }
 
+/** Atomically accept one Slack task and persist its input; retries cannot dispatch it twice. */
+export function storeSlackTask(msg: NewMessage, taskKey: string): boolean {
+  if (!/^slack:[CG][A-Z0-9]+:thread:\d+\.\d{6}$/.test(msg.chat_jid)) {
+    throw new Error('Slack task requires a thread-qualified conversation');
+  }
+  return db.transaction(() => {
+    const receipt = db
+      .prepare(
+        `INSERT INTO slack_task_receipts
+      (task_key, chat_jid, message_id, created_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(task_key) DO NOTHING`,
+      )
+      .run(taskKey, msg.chat_jid, msg.id, msg.timestamp);
+    if (!receipt.changes) return false;
+    storeMessage(msg);
+    db.prepare(
+      'UPDATE messages SET slack_dispatch_authorized = 1 WHERE id = ? AND chat_jid = ?',
+    ).run(msg.id, msg.chat_jid);
+    return true;
+  })();
+}
+
 /**
  * Store a message directly.
  */
@@ -346,7 +387,7 @@ export function getNewMessages(
              reply_to_message_id, reply_to_message_content, reply_to_sender_name
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
-        AND is_bot_message = 0 AND content NOT LIKE ?
+        AND (is_bot_message = 0 OR (slack_dispatch_authorized = 1 AND chat_jid LIKE 'slack:%:thread:%')) AND content NOT LIKE ?
         AND content != '' AND content IS NOT NULL
       ORDER BY timestamp DESC
       LIMIT ?
@@ -380,7 +421,7 @@ export function getMessagesSince(
              reply_to_message_id, reply_to_message_content, reply_to_sender_name
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
-        AND is_bot_message = 0 AND content NOT LIKE ?
+        AND (is_bot_message = 0 OR (slack_dispatch_authorized = 1 AND chat_jid LIKE 'slack:%:thread:%')) AND content NOT LIKE ?
         AND content != '' AND content IS NOT NULL
       ORDER BY timestamp DESC
       LIMIT ?
