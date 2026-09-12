@@ -1,0 +1,31 @@
+{
+  "display_information": {
+    "name": "Rutledge Team - Andy",
+    "description": "Internal Andy task routing for Rutledge Companies.",
+    "background_color": "#1E293B"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Andy",
+      "always_online": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "groups:history"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "message.groups"
+      ]
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}

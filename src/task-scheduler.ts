@@ -10,6 +10,7 @@ import {
 } from './container-runner.js';
 import {
   getAllTasks,
+  isSlackStopped,
   getDueTasks,
   getTaskById,
   logTaskRun,
@@ -79,6 +80,10 @@ async function runTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
 ): Promise<void> {
+  if (isSlackStopped(task.chat_jid)) {
+    updateTask(task.id, { status: 'paused' });
+    return;
+  }
   const startTime = Date.now();
   let groupDir: string;
   try {

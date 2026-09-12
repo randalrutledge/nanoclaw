@@ -51,6 +51,7 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  slack_dispatch_authorized?: boolean;
   thread_id?: string;
   reply_to_message_id?: string;
   reply_to_message_content?: string;

@@ -31,6 +31,7 @@ import {
 } from './container-runtime.js';
 import {
   getAllChats,
+  isSlackStopped,
   getAllRegisteredGroups,
   getAllSessions,
   deleteSession,
@@ -342,6 +343,7 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
+  if (isSlackStopped(chatJid)) return 'success';
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
 
@@ -636,6 +638,7 @@ async function main(): Promise<void> {
 
   // Channel callbacks (shared by all channels)
   const channelOpts = {
+    registerConversation: registerGroup,
     onMessage: (chatJid: string, msg: NewMessage) => {
       // Remote control commands — intercept before storage
       const trimmed = msg.content.trim();
