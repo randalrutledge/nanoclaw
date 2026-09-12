@@ -59,6 +59,7 @@ export class SlackChannel implements Channel {
   }
 
   async receive(event: SlackInput, team: string): Promise<void> {
+    if (!this.connected) return;
     const task = routeSlackInput(event, team, this.self, this.policy);
     if (!task) return;
     const parent = this.opts.registeredGroups()[`slack:${event.channel}`];
@@ -122,9 +123,12 @@ export class SlackChannel implements Channel {
   async sendMessage(jid: string, text: string): Promise<void> {
     if (!this.connected) throw new Error('Slack connection is not running');
     const target = slackDestination(jid);
+    const parent = this.opts.registeredGroups()[`slack:${target.channel}`];
     if (
       !this.policy.channels.has(target.channel) ||
-      !this.opts.registeredGroups()[jid]
+      !this.opts.registeredGroups()[jid] ||
+      !parent ||
+      parent.isMain
     )
       throw new Error('Slack destination is not registered/allowed');
     // Do not split into separately retried chunks; callers must link large artifacts.

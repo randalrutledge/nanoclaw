@@ -64,6 +64,27 @@ beforeEach(() => {
   mocks.start.mockResolvedValue(undefined);
 });
 describe('Slack adapter', () => {
+  it('ignores input after disconnect instead of persisting new work', async () => {
+    const channel = setup();
+    await channel.connect();
+    await channel.disconnect();
+    await channel.receive(event, 'T123');
+    expect(
+      getAllRegisteredGroups()[`slack:C123:thread:${event.ts}`],
+    ).toBeUndefined();
+    expect(mocks.post).not.toHaveBeenCalled();
+  });
+  it('rejects delayed output when its parent becomes an elevated group', async () => {
+    const channel = setup();
+    await channel.connect();
+    await channel.receive(event, 'T123');
+    const parent = getAllRegisteredGroups()['slack:C123'];
+    setRegisteredGroup('slack:C123', { ...parent, isMain: true });
+    await expect(
+      channel.sendMessage(`slack:C123:thread:${event.ts}`, 'late result'),
+    ).rejects.toThrow('not registered/allowed');
+    expect(mocks.post).toHaveBeenCalledTimes(1);
+  });
   it('registers isolated non-main threads and keeps duplicate tasks from dispatching', async () => {
     const channel = setup();
     await channel.connect();
