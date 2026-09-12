@@ -15,6 +15,17 @@ import {
 
 let db: Database.Database;
 
+export function isSlackStopped(jid: string): boolean {
+  const channel = /^slack:([CG][A-Z0-9]+)(?::thread:.*)?$/.exec(jid)?.[1];
+  return !!channel && getRouterState(`slack_stop:${channel}`) === '1';
+}
+
+export function stopSlackChannel(channel: string): void {
+  if (!/^[CG][A-Z0-9]+$/.test(channel))
+    throw new Error('Invalid Slack channel');
+  setRouterState(`slack_stop:${channel}`, '1');
+}
+
 export function getSlackOutbox(): SlackOutbox {
   return new SlackOutbox(db);
 }
@@ -327,6 +338,7 @@ export function storeMessage(msg: NewMessage): void {
 
 /** Atomically accept one Slack task and persist its input; retries cannot dispatch it twice. */
 export function storeSlackTask(msg: NewMessage, taskKey: string): boolean {
+  if (isSlackStopped(msg.chat_jid)) return false;
   if (!/^slack:[CG][A-Z0-9]+:thread:\d+\.\d{6}$/.test(msg.chat_jid)) {
     throw new Error('Slack task requires a thread-qualified conversation');
   }
@@ -380,6 +392,7 @@ export function getNewMessages(
   botPrefix: string,
   limit: number = 200,
 ): { messages: NewMessage[]; newTimestamp: string } {
+  jids = jids.filter((jid) => !isSlackStopped(jid));
   if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
 
   const placeholders = jids.map(() => '?').join(',');
@@ -417,6 +430,7 @@ export function getMessagesSince(
   botPrefix: string,
   limit: number = 200,
 ): NewMessage[] {
+  if (isSlackStopped(chatJid)) return [];
   // Filter bot messages using both the is_bot_message flag AND the content
   // prefix as a backstop for messages written before the migration ran.
   // Subquery takes the N most recent, outer query re-sorts chronologically.

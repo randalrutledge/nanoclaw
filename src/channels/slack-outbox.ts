@@ -57,6 +57,7 @@ export class SlackOutbox {
     workspace: string,
     send: (row: SlackDelivery) => Promise<string>,
     now = Date.now(),
+    permitted: (jid: string) => boolean = () => true,
   ): Promise<void> {
     const backoff = this.db
       .prepare('SELECT until_ms FROM slack_delivery_backoff WHERE workspace=?')
@@ -68,6 +69,7 @@ export class SlackOutbox {
       )
       .all(workspace, now) as SlackDelivery[];
     for (const row of rows) {
+      if (!permitted(row.jid)) continue;
       const claimed = this.db
         .prepare(
           "UPDATE slack_outbox SET status='sending', attempts=attempts+1 WHERE id=? AND status='pending'",

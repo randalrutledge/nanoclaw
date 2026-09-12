@@ -31,6 +31,7 @@ import {
 } from './container-runtime.js';
 import {
   getAllChats,
+  isSlackStopped,
   getAllRegisteredGroups,
   getAllSessions,
   deleteSession,
@@ -342,6 +343,7 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
+  if (isSlackStopped(chatJid)) return 'success';
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
 

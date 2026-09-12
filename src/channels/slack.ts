@@ -1,5 +1,10 @@
 import { App, LogLevel } from '@slack/bolt';
-import { getSlackOutbox, storeSlackTask } from '../db.js';
+import {
+  getSlackOutbox,
+  isSlackStopped,
+  stopSlackChannel,
+  storeSlackTask,
+} from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import type { Channel } from '../types.js';
@@ -75,8 +80,25 @@ export class SlackChannel implements Channel {
 
   async receive(event: SlackInput, team: string): Promise<void> {
     if (!this.connected) return;
+    if (/^STOP Andy$/i.test((event.text || '').trim())) {
+      const control = routeSlackInput(
+        { ...event, text: 'TASK Andy TR-STOP Stop' },
+        team,
+        this.self,
+        this.policy,
+      );
+      if (!control || !this.opts.registeredGroups()[`slack:${event.channel}`])
+        return;
+      stopSlackChannel(event.channel!);
+      logger.warn(
+        { channel: event.channel },
+        'Slack dispatch and delivery paused; in-flight work may still finish',
+      );
+      return;
+    }
     const task = routeSlackInput(event, team, this.self, this.policy);
     if (!task) return;
+    if (isSlackStopped(task.jid)) return;
     const parent = this.opts.registeredGroups()[`slack:${event.channel}`];
     // Explicit opt-in registration is required as well as configuration allowlists.
     if (!parent || parent.isMain || !this.opts.registerConversation) return;
@@ -136,6 +158,7 @@ export class SlackChannel implements Channel {
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
+    if (isSlackStopped(jid)) throw new Error('Slack channel is stopped');
     if (!this.connected) throw new Error('Slack connection is not running');
     const target = slackDestination(jid);
     const parent = this.opts.registeredGroups()[`slack:${target.channel}`];
@@ -158,30 +181,35 @@ export class SlackChannel implements Channel {
 
   private async flushOutbox(): Promise<void> {
     if (this.draining) return this.draining;
-    this.draining = this.outbox.drain(this.policy.workspace, async (row) => {
-      const target = slackDestination(row.jid);
-      const parent = this.opts.registeredGroups()[`slack:${target.channel}`];
-      if (
-        !this.connected ||
-        !parent ||
-        parent.isMain ||
-        !this.policy.channels.has(target.channel) ||
-        !this.opts.registeredGroups()[row.jid]
-      ) {
-        throw Object.assign(new Error('Destination unavailable'), {
-          code: 'slack_destination_revoked',
+    this.draining = this.outbox.drain(
+      this.policy.workspace,
+      async (row) => {
+        const target = slackDestination(row.jid);
+        const parent = this.opts.registeredGroups()[`slack:${target.channel}`];
+        if (
+          !this.connected ||
+          !parent ||
+          parent.isMain ||
+          !this.policy.channels.has(target.channel) ||
+          !this.opts.registeredGroups()[row.jid]
+        ) {
+          throw Object.assign(new Error('Destination unavailable'), {
+            code: 'slack_destination_revoked',
+          });
+        }
+        const result = await this.app.client.chat.postMessage({
+          ...target,
+          text: row.text,
+          unfurl_links: false,
+          unfurl_media: false,
         });
-      }
-      const result = await this.app.client.chat.postMessage({
-        ...target,
-        text: row.text,
-        unfurl_links: false,
-        unfurl_media: false,
-      });
-      if (!result.ok || !result.ts)
-        throw new Error('Slack delivery not confirmed');
-      return result.ts;
-    });
+        if (!result.ok || !result.ts)
+          throw new Error('Slack delivery not confirmed');
+        return result.ts;
+      },
+      Date.now(),
+      (jid) => !isSlackStopped(jid),
+    );
     try {
       await this.draining;
     } finally {

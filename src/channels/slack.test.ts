@@ -18,6 +18,7 @@ vi.mock('@slack/bolt', () => ({
 import { SlackChannel } from './slack.js';
 import {
   _initTestDatabase,
+  isSlackStopped,
   getNewMessages,
   getAllRegisteredGroups,
   setRegisteredGroup,
@@ -64,6 +65,41 @@ beforeEach(() => {
   mocks.start.mockResolvedValue(undefined);
 });
 describe('Slack adapter', () => {
+  it('persists STOP across channel recreation and blocks pending and new input and output', async () => {
+    const channel = setup();
+    await channel.connect();
+    await channel.receive(event, 'T123');
+    const jid = `slack:C123:thread:${event.ts}`;
+    await channel.receive({ ...event, text: 'STOP Andy' }, 'T123');
+    expect(isSlackStopped(jid)).toBe(true);
+    expect(getNewMessages([jid], '', 'Andy').messages).toHaveLength(0);
+    await expect(channel.sendMessage(jid, 'late result')).rejects.toThrow(
+      'stopped',
+    );
+    await channel.disconnect();
+    const second = setup();
+    await second.connect();
+    await second.receive(
+      { ...event, ts: '1789228000.000001', text: 'TASK Andy TR-2 New work' },
+      'T123',
+    );
+    expect(
+      getAllRegisteredGroups()['slack:C123:thread:1789228000.000001'],
+    ).toBeUndefined();
+    expect(mocks.post).toHaveBeenCalledTimes(1);
+    await second.disconnect();
+  });
+  it('ignores STOP from an unauthorized sender or workspace', async () => {
+    const channel = setup();
+    await channel.connect();
+    await channel.receive(
+      { ...event, user: 'UOTHER', text: 'STOP Andy' },
+      'T123',
+    );
+    await channel.receive({ ...event, text: 'STOP Andy' }, 'TOTHER');
+    expect(isSlackStopped('slack:C123')).toBe(false);
+    await channel.disconnect();
+  });
   it('ignores input after disconnect instead of persisting new work', async () => {
     const channel = setup();
     await channel.connect();

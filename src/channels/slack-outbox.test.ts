@@ -6,6 +6,19 @@ import { join } from 'node:path';
 import { SlackOutbox } from './slack-outbox.js';
 
 describe('durable Slack delivery', () => {
+  it('leaves paused deliveries pending without transport attempts', async () => {
+    const db = new Database(':memory:');
+    try {
+      const box = new SlackOutbox(db);
+      const id = box.enqueue('T1', 'thread', 'answer', 1);
+      const send = vi.fn();
+      await box.drain('T1', send, 2, () => false);
+      expect(box.get(id)).toMatchObject({ status: 'pending', attempts: 0 });
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
   it('recovers a pending reply from a reopened database with its original thread', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'slack-outbox-'));
     let db = new Database(join(dir, 'test.db'));
